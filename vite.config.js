@@ -18,12 +18,12 @@ export default defineConfig({
         display: 'standalone',
         icons: [
           {
-            src: 'pwa-192x192.png', // Must be exactly this name in the 'public' folder
+            src: '/pwa-192x192.png', // Must be exactly this name in the 'public' folder
             sizes: '192x192',
             type: 'image/png'
           },
           {
-            src: 'pwa-512x512.png', // Must be exactly this name in the 'public' folder
+            src: '/pwa-512x512.png', // Must be exactly this name in the 'public' folder
             sizes: '512x512',
             type: 'image/png',
             purpose: 'any maskable'
