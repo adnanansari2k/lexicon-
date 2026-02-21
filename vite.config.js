@@ -6,23 +6,24 @@ export default defineConfig({
   plugins: [
     vue(),
     VitePWA({
-      registerType: 'autoUpdate', // Automatically updates the app when you push new code
-      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
+      registerType: 'autoUpdate',
+      injectRegister: 'auto', // Explicitly injects the service worker
+      // I removed 'includeAssets' so it doesn't fail if you are missing a favicon
       manifest: {
         name: 'Monk Mode Learning',
         short_name: 'Monk Mode',
         description: 'Focus, learn, and master your vocabulary.',
-        theme_color: '#0f172a', // The dark blue from your app
-        background_color: '#f8fafc', // The light background from your app
-        display: 'standalone', // This hides the browser URL bar!
+        theme_color: '#0f172a',
+        background_color: '#f8fafc',
+        display: 'standalone',
         icons: [
           {
-            src: 'pwa-192x192.png',
+            src: 'pwa-192x192.png', // Must be exactly this name in the 'public' folder
             sizes: '192x192',
             type: 'image/png'
           },
           {
-            src: 'pwa-512x512.png',
+            src: 'pwa-512x512.png', // Must be exactly this name in the 'public' folder
             sizes: '512x512',
             type: 'image/png',
             purpose: 'any maskable'
