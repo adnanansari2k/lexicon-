@@ -2,214 +2,321 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { doc, updateDoc } from 'firebase/firestore'
 import { db } from '../firebase'
-
-// 🚨 THESE IMPORTS FIX YOUR ERROR 🚨
-import ReviewCard from './ReviewCard.vue'
-import ReinforcementCard from './ReinforcementCard.vue'
-import QuizCard from './QuizCard.vue'
+import FlashCard from './FlashCard.vue'
+import LevelUpQuiz from './LevelUpQuiz.vue'
 
 const props = defineProps(['words'])
 const emit = defineEmits(['refresh', 'update:currentTab'])
 
-// --- STATE ---
-const mode = ref('review') // 'review' | 'reinforcement' | 'finished'
-const reviewQueue = ref([])
-const reinforcementQueue = ref([]) 
-const currentIndex = ref(0) 
-const dailyGoal = 20
-const TARGET_REPS = 5 // User must remember the word 5 times!
-const INTERVALS = [1, 3, 7, 14, 30, 60]
+// â”€â”€â”€ CONSTANTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-// --- QUEUE BUILDING ---
-const buildQueue = () => {
-  mode.value = 'review'
-  currentIndex.value = 0
-  reviewQueue.value = []
-  reinforcementQueue.value = []
+const STABILIZE_TARGET = 3
 
+// 13 internal stages â†’ interval in days (index 0â€“12)
+const INTERVALS = [1, 3, 7, 10, 14, 21, 30, 45, 60, 90, 120, 180, 365]
+
+const MAX_INTERNAL = 12
+
+// 13 internal levels â†’ 8 visible UI labels
+const UI_LEVEL_MAP = [
+  'New',          // 0
+  'Learning',     // 1
+  'Learning',     // 2
+  'Reinforcing',  // 3
+  'Reinforcing',  // 4
+  'Stabilizing',  // 5
+  'Stabilizing',  // 6
+  'Strong',       // 7
+  'Strong',       // 8
+  'Long-Term',    // 9
+  'Long-Term',    // 10
+  'Mastered',     // 11
+  'Elite',        // 12
+]
+
+// Quiz fires when crossing these internal thresholds (visible label changes)
+const QUIZ_THRESHOLDS = new Set([1, 3, 5, 7, 9, 11, 12])
+
+// â”€â”€â”€ STATE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const queue = ref([])
+const currentIndex = ref(0)
+const mode = ref('loading')  // 'session' | 'quiz' | 'finished'
+const quizWord = ref(null)
+const sessionStats = ref({ remembered: 0, forgot: 0, leveled: 0 })
+
+// â”€â”€â”€ ACCESSORS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const iml = (w) => Math.min(w.mastery_level ?? w.masteryLevel ?? 0, MAX_INTERNAL)
+
+// â”€â”€â”€ SMART DECAY â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Early (0â€“1): reset to 0
+// Mid (2â€“7):   drop 1 level
+// High (8+):   drop max 2 levels (Elite Protection)
+const decayLevel = (level) => {
+  if (level <= 1) return 0
+  if (level <= 7) return level - 1
+  return Math.max(level - 2, 0)
+}
+
+// â”€â”€â”€ BUILD SESSION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const buildSession = () => {
   if (!props.words?.length) { mode.value = 'finished'; return }
 
   const now = Date.now()
-  const due = props.words.filter(w => w.nextReview && w.nextReview <= now)
-  const newWords = props.words.filter(w => !w.nextReview).slice(0, Math.max(0, dailyGoal - due.length))
-  
-  reviewQueue.value = [...due, ...newWords]
-  if (reviewQueue.value.length === 0) mode.value = 'finished'
+  const sessionWords = props.words.filter(w => {
+    const stage = w.stage || 'stabilizing'
+    if (stage === 'stabilizing') return true
+    return w.nextReview && w.nextReview <= now
+  }).map(w => ({
+    ...w,
+    stage: w.stage || 'stabilizing',
+    sessionStreak: 0,
+  }))
+
+  if (!sessionWords.length) { mode.value = 'finished'; return }
+
+  queue.value = sessionWords
+  currentIndex.value = 0
+  mode.value = 'session'
 }
 
-onMounted(buildQueue)
-watch(() => props.words, buildQueue, { deep: true })
+onMounted(buildSession)
+watch(() => props.words, buildSession, { deep: false })
 
-// --- COMPUTE CURRENT WORD ---
-const currentWord = computed(() => {
-  if (mode.value === 'review') {
-    return reviewQueue.value[currentIndex.value]
-  } else {
-    // In Reinforcement, we ALWAYS look at the front of the queue
-    return reinforcementQueue.value[0]
-  }
-})
+// â”€â”€â”€ CURRENT WORD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const currentWord = computed(() => queue.value[currentIndex.value])
 
-// --- LOGIC: STANDARD REVIEW ---
-const handleReviewResult = (result) => {
+// â”€â”€â”€ HANDLE REMEMBER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const handleRemember = async () => {
   const word = currentWord.value
+  if (!word) return
+  sessionStats.value.remembered++
 
-  if (mode.value === 'review') {
-    if (result === 'remember') {
-      const newStreak = (word.streak || 0) + 1
-      const newInterval = INTERVALS[Math.min(newStreak - 1, INTERVALS.length - 1)]
-      saveToFirebase(word.id, newStreak, newInterval)
-      nextReviewCard()
+  if (word.stage === 'stabilizing') {
+    word.sessionStreak++
+    if (word.sessionStreak >= STABILIZE_TARGET) {
+      // Graduate â†’ quiz first
+      quizWord.value = word
+      mode.value = 'quiz'
     } else {
-      reinforcementQueue.value.push({ ...word, drillStep: 0, repsCompleted: 0 })
-      nextReviewCard()
+      rotateToBack()
     }
   } else {
-    // Repetition / Drill Mode (ReviewCard Steps)
-    if (result === 'remember') {
-      advanceDrillStep()
+    const currentLevel = iml(word)
+    const newLevel = Math.min(currentLevel + 1, MAX_INTERNAL)
+
+    if (QUIZ_THRESHOLDS.has(newLevel)) {
+      // Visible label crossing â†’ quiz required
+      word._pendingLevel = newLevel
+      quizWord.value = word
+      mode.value = 'quiz'
     } else {
-      resetDrillStep()
+      await advanceWord(word, newLevel)
+      removeFromQueue()
     }
   }
 }
 
-// --- LOGIC: REINFORCEMENT DRILL ---
-const handleStudyComplete = () => advanceDrillStep()
+// â”€â”€â”€ HANDLE FORGOT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const handleForgot = async () => {
+  const word = currentWord.value
+  if (!word) return
+  sessionStats.value.forgot++
 
-const handleQuizResult = (isCorrect) => {
-  if (isCorrect) advanceDrillStep()
-  else {
-    alert("Incorrect. Back to study.")
-    resetDrillStep()
-  }
+  const newLevel = decayLevel(iml(word))
+
+  await save(word.id, {
+    stage: 'stabilizing',
+    streak: 0,
+    interval: 0,
+    nextReview: Date.now(),
+    lastReviewed: Date.now(),
+    mastery_level: newLevel,
+    masteryLevel: newLevel,
+    totalFailures: (word.totalFailures || 0) + 1,
+    totalReviews: (word.totalReviews || 0) + 1,
+  })
+
+  word.mastery_level = newLevel
+  word.masteryLevel = newLevel
+  word.stage = 'stabilizing'
+  word.sessionStreak = 0
+  rotateToBack()
 }
 
-const advanceDrillStep = async () => {
-  const word = reinforcementQueue.value[0]
+// â”€â”€â”€ QUIZ PASS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const handleQuizPass = async () => {
+  const word = quizWord.value
+  sessionStats.value.leveled++
 
-  if (word.drillStep < 3) {
-    word.drillStep++
+  if (word.stage === 'stabilizing') {
+    await advanceWord(word, 1)  // graduate to internal level 1
   } else {
-    // PHASE 2: The 5-Repetition Loop
-    word.repsCompleted = (word.repsCompleted || 0) + 1
-
-    if (word.repsCompleted >= TARGET_REPS) {
-      // 🎓 GRADUATE! 
-      await saveToFirebase(word.id, 0, 1) 
-      reinforcementQueue.value.shift() 
-    } else {
-      // Move word to the BACK of the queue to space out the repetition
-      const movedWord = reinforcementQueue.value.shift()
-      reinforcementQueue.value.push(movedWord)
-    }
-
-    if (reinforcementQueue.value.length === 0) {
-      mode.value = 'finished'
-    }
+    const newLevel = word._pendingLevel ?? Math.min(iml(word) + 1, MAX_INTERNAL)
+    await advanceWord(word, newLevel)
   }
+
+  quizWord.value = null
+  removeFromQueue()
+  if (queue.value.length === 0) mode.value = 'finished'
+  else mode.value = 'session'
 }
 
-const resetDrillStep = () => {
-  const word = reinforcementQueue.value[0]
-  word.drillStep = 0 
-  word.repsCompleted = 0 
-  
-  // Move to back of queue
-  const movedWord = reinforcementQueue.value.shift()
-  reinforcementQueue.value.push(movedWord)
+// â”€â”€â”€ QUIZ FAIL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const handleQuizFail = async () => {
+  const word = quizWord.value
+  sessionStats.value.forgot++
+
+  const newLevel = decayLevel(iml(word))
+
+  await save(word.id, {
+    stage: 'stabilizing',
+    streak: 0,
+    interval: 0,
+    nextReview: Date.now(),
+    lastReviewed: Date.now(),
+    mastery_level: newLevel,
+    masteryLevel: newLevel,
+    totalFailures: (word.totalFailures || 0) + 1,
+    totalReviews: (word.totalReviews || 0) + 1,
+  })
+
+  const idx = queue.value.findIndex(w => w.id === word.id)
+  if (idx !== -1) {
+    queue.value[idx].mastery_level = newLevel
+    queue.value[idx].masteryLevel = newLevel
+    queue.value[idx].stage = 'stabilizing'
+    queue.value[idx].sessionStreak = 0
+    const w = queue.value.splice(idx, 1)[0]
+    queue.value.push(w)
+    if (currentIndex.value >= queue.value.length) currentIndex.value = 0
+  }
+
+  quizWord.value = null
+  mode.value = 'session'
 }
 
-// --- NAVIGATION ---
-const nextReviewCard = () => {
-  if (currentIndex.value < reviewQueue.value.length - 1) {
-    currentIndex.value++
-  } else {
-    if (reinforcementQueue.value.length > 0) {
-      mode.value = 'reinforcement'
-    } else {
-      mode.value = 'finished'
-    }
-  }
+// â”€â”€â”€ HELPERS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const advanceWord = async (word, newLevel) => {
+  const newInterval = INTERVALS[newLevel]
+  const newStreak = (word.streak || 0) + 1
+
+  await save(word.id, {
+    stage: 'spaced',
+    streak: newStreak,
+    interval: newInterval,
+    nextReview: Date.now() + newInterval * 86400000,
+    lastReviewed: Date.now(),
+    mastery_level: newLevel,
+    masteryLevel: newLevel,
+    totalReviews: (word.totalReviews || 0) + 1,
+  })
+}
+
+const removeFromQueue = () => {
+  queue.value.splice(currentIndex.value, 1)
+  if (queue.value.length === 0) { mode.value = 'finished'; return }
+  if (currentIndex.value >= queue.value.length) currentIndex.value = 0
+}
+
+const rotateToBack = () => {
+  const w = queue.value.splice(currentIndex.value, 1)[0]
+  queue.value.push(w)
+  if (currentIndex.value >= queue.value.length) currentIndex.value = 0
+}
+
+const save = async (id, data) => {
+  try { await updateDoc(doc(db, 'words', id), data) }
+  catch (e) { console.error('Save failed', e) }
 }
 
 const returnToLibrary = () => {
-  emit('refresh') 
-  emit('update:currentTab', 'library') 
+  emit('refresh')
+  emit('update:currentTab', 'library')
 }
 
-const saveToFirebase = async (id, streak, interval) => {
-  try {
-    const nextDate = Date.now() + (interval * 24 * 60 * 60 * 1000)
-    await updateDoc(doc(db, "words", id), {
-      streak,
-      interval,
-      nextReview: nextDate,
-      lastReviewed: Date.now()
-    })
-  } catch (e) { console.error("Save failed", e) }
-}
+// â”€â”€â”€ DERIVED â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const progressText = computed(() => {
+  if (!currentWord.value) return ''
+  const w = currentWord.value
+  if (w.stage === 'stabilizing') return `${w.sessionStreak} / ${STABILIZE_TARGET} recalls`
+  return `Streak ${w.streak || 0}`
+})
+
+// kept for template compatibility
+const stagePillText = computed(() => {
+  if (!currentWord.value) return ''
+  return currentWord.value.stage === 'stabilizing' ? 'Stabilizing' : 'Spaced Review'
+})
 </script>
 
 <template>
-  <div class="game-wrapper">
-    
-    <div v-if="mode !== 'finished'" class="modern-header">
-      <div class="badge" :class="mode">
-        {{ mode === 'review' ? '🧠 Review Mode' : '🔥 Deep Drill' }}
+  <div class="shell">
+
+    <!-- HEADER (session only) -->
+    <div v-if="mode === 'session'" class="top-bar">
+      <div class="queue-info">
+        <span class="q-num">{{ queue.length }}</span>
+        <span class="q-label">left</span>
+        <span class="sep">&middot;</span>
+        <span class="prog" :class="currentWord?.stage">{{ progressText }}</span>
       </div>
-      
-      <div v-if="mode === 'reinforcement'" class="drill-progress">
-        <template v-if="currentWord.drillStep < 3">
-          <span :class="{ active: currentWord.drillStep >= 0 }">Study</span>
-          <div class="dot"></div>
-          <span :class="{ active: currentWord.drillStep >= 1 }">Recall</span>
-          <div class="dot"></div>
-          <span :class="{ active: currentWord.drillStep >= 2 }">Match</span>
-        </template>
-        <template v-else>
-          <div class="rep-pill">
-            <span class="pulse-dot"></span> Repetition: {{ currentWord.repsCompleted || 0 }} / {{ TARGET_REPS }}
-          </div>
-        </template>
+      <div class="stage-tag" :class="currentWord?.stage">
+        {{ currentWord?.stage === 'stabilizing' ? 'Stabilizing' : 'Spaced Review' }}
       </div>
     </div>
 
+    <!-- QUIZ HEADER -->
+    <div v-if="mode === 'quiz'" class="top-bar quiz-bar">
+      <div class="queue-info">
+        <span class="q-num">{{ queue.length }}</span>
+        <span class="q-label">left</span>
+      </div>
+      <div class="stage-tag quiz-tag">
+        Level Up Quiz
+      </div>
+    </div>
+
+    <!-- CARD AREA -->
     <div class="card-area">
-      
-      <ReviewCard 
-        v-if="mode === 'review' && currentWord"
+
+      <FlashCard
+        v-if="mode === 'session' && currentWord"
         :word="currentWord"
-        @result="handleReviewResult"
+        @remember="handleRemember"
+        @forgot="handleForgot"
       />
 
-      <template v-else-if="mode === 'reinforcement' && currentWord">
-        <ReinforcementCard
-          v-if="currentWord.drillStep === 0"
-          :word="currentWord"
-          @complete="handleStudyComplete"
-        />
-        <ReviewCard
-          v-else-if="currentWord.drillStep === 1 || currentWord.drillStep === 3"
-          :word="currentWord"
-          @result="handleReviewResult"
-        />
-        <QuizCard 
-          v-else-if="currentWord.drillStep === 2"
-          :word="currentWord"
-          :allWords="props.words"
-          @result="handleQuizResult"
-        />
-      </template>
+      <LevelUpQuiz
+        v-else-if="mode === 'quiz' && quizWord"
+        :word="quizWord"
+        :allWords="props.words"
+        @pass="handleQuizPass"
+        @fail="handleQuizFail"
+      />
 
-      <div v-else-if="mode === 'finished'" class="success-state">
-        <div class="success-bg"></div>
-        <div class="icon-container">
-          <span class="icon">🧘</span>
+      <!-- DONE -->
+      <div v-else-if="mode === 'finished'" class="done">
+        <div class="done-glow"></div>
+        <div class="done-icon">ðŸ§˜</div>
+        <h2 class="done-title">Session Complete</h2>
+        <p class="done-sub">Your mind is stronger today.</p>
+
+        <div class="done-stats">
+          <div class="ds remembered">
+            <span class="ds-num">{{ sessionStats.remembered }}</span>
+            <span class="ds-lbl">Remembered</span>
+          </div>
+          <div class="ds forgot">
+            <span class="ds-num">{{ sessionStats.forgot }}</span>
+            <span class="ds-lbl">Forgot</span>
+          </div>
+          <div v-if="sessionStats.leveled" class="ds leveled">
+            <span class="ds-num">{{ sessionStats.leveled }}</span>
+            <span class="ds-lbl">Leveled Up</span>
+          </div>
         </div>
-        <h2>Session Complete</h2>
-        <p>Your mind is stronger today.</p>
-        <button @click="returnToLibrary" class="success-btn">Return to Library</button>
+
+        <button @click="returnToLibrary" class="done-btn">Back to Library</button>
       </div>
 
     </div>
@@ -217,119 +324,123 @@ const saveToFirebase = async (id, streak, interval) => {
 </template>
 
 <style scoped>
-/* REDUCED PADDING = WIDER CARD ON MOBILE */
-.game-wrapper { 
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap');
+
+.shell {
   height: calc(100vh - 100px);
-  display: flex; 
-  flex-direction: column; 
-  padding: 8px 12px;
-  max-width: 500px; 
-  margin: 0 auto; 
+  display: flex;
+  flex-direction: column;
+  padding: 10px 12px;
+  max-width: 500px;
+  margin: 0 auto;
+  gap: 10px;
+  font-family: 'Plus Jakarta Sans', sans-serif;
 }
 
-/* SLEEK TOP HEADER */
-.modern-header { 
-  display: flex; 
-  flex-direction: column; 
-  align-items: center; 
-  margin-bottom: 12px; 
-  flex-shrink: 0; 
-  gap: 8px; 
+/* TOP BAR */
+.top-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
 }
-.badge { 
-  background: white; 
-  padding: 6px 14px; 
-  border-radius: 20px; 
-  font-size: 0.75rem; 
-  font-weight: 800; 
-  color: #475569; 
-  text-transform: uppercase; 
-  letter-spacing: 1px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
-  border: 1px solid #f1f5f9;
+
+.queue-info {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.78rem;
 }
-.badge.reinforcement { background: #fff7ed; color: #ea580c; border: 1px solid #ffedd5; }
+.q-num { font-weight: 800; color: #334155; font-size: 0.95rem; }
+.q-label { color: #94a3b8; font-weight: 600; }
+.sep { color: #cbd5e1; }
 
-/* PROGRESS INDICATOR */
-.drill-progress { 
-  display: flex; 
-  align-items: center; 
-  gap: 8px; 
-  font-size: 0.65rem; 
-  color: #cbd5e1; 
-  font-weight: 700; 
-  text-transform: uppercase; 
-  letter-spacing: 0.5px; 
+.prog {
+  font-size: 0.7rem; font-weight: 700;
+  padding: 2px 8px; border-radius: 8px;
 }
-.drill-progress span { transition: color 0.3s; }
-.drill-progress span.active { color: #ea580c; }
-.dot { width: 4px; height: 4px; border-radius: 50%; background: #e2e8f0; }
+.prog.stabilizing { color: #d97706; background: #fef3c7; }
+.prog.spaced      { color: #2563eb; background: #dbeafe; }
 
-.rep-pill { 
-  display: flex; 
-  align-items: center; 
-  gap: 6px; 
-  background: #ffedd5; 
-  color: #c2410c; 
-  padding: 6px 12px; 
-  border-radius: 12px; 
-  font-size: 0.75rem; 
+.stage-tag {
+  font-size: 0.67rem; font-weight: 800;
+  text-transform: uppercase; letter-spacing: 0.5px;
+  padding: 5px 12px; border-radius: 20px;
 }
-.pulse-dot { width: 6px; height: 6px; background: #ea580c; border-radius: 50%; animation: pulse 1.5s infinite; }
+.stage-tag.stabilizing { background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa; }
+.stage-tag.spaced      { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+.quiz-tag              { background: #fef9ee; color: #92400e; border: 1px solid #fde68a; }
 
-.card-area { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+/* CARD AREA */
+.card-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
 
-/* 🌟 NEW SUCCESS STATE */
-.success-state { 
+/* DONE STATE */
+.done {
   position: relative;
-  text-align: center; 
-  padding: 40px 20px; 
-  background: white; 
-  border-radius: 24px; 
-  box-shadow: 0 10px 40px -10px rgba(15, 23, 42, 0.1); 
-  height: 100%; 
-  display: flex; 
-  flex-direction: column; 
-  justify-content: center; 
-  align-items: center; 
+  background: white;
+  border-radius: 24px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  padding: 40px 24px;
   overflow: hidden;
   border: 1px solid #f1f5f9;
+  box-shadow: 0 10px 40px -10px rgba(15,23,42,0.08);
 }
-.success-bg {
-  position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background: radial-gradient(circle at top, #f0fdf4 0%, transparent 60%);
-  opacity: 0.7;
+.done-glow {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  background: radial-gradient(circle at top center, #f0fdf4 0%, transparent 60%);
   z-index: 0;
 }
-.icon-container {
-  background: white;
-  width: 80px; height: 80px;
-  border-radius: 50%;
-  display: flex; justify-content: center; align-items: center;
-  box-shadow: 0 8px 24px rgba(21, 128, 61, 0.15);
-  margin-bottom: 24px;
-  z-index: 1;
+.done-icon {
+  font-size: 3.2rem; z-index: 1;
+  background: white; width: 80px; height: 80px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; box-shadow: 0 8px 24px rgba(21,128,61,0.12);
+  margin-bottom: 18px;
 }
-.icon { font-size: 3rem; }
-.success-state h2 { margin: 0 0 8px 0; color: #0f172a; font-size: 1.8rem; font-weight: 800; z-index: 1;}
-.success-state p { margin: 0; color: #64748b; font-size: 1.05rem; z-index: 1; }
+.done-title { font-size: 1.8rem; font-weight: 800; color: #0f172a; margin: 0 0 6px; z-index: 1; }
+.done-sub   { color: #64748b; margin: 0 0 28px; font-size: 0.95rem; z-index: 1; }
 
-.success-btn { 
-  margin-top: 40px; 
-  padding: 16px 40px; 
-  background: #0f172a; 
-  color: white; 
-  border: none; 
-  border-radius: 16px; 
-  font-weight: bold; 
-  font-size: 1.05rem; 
-  cursor: pointer; 
-  box-shadow: 0 8px 20px -6px rgba(15, 23, 42, 0.3);
-  z-index: 1;
-  transition: transform 0.2s;
+.done-stats {
+  display: flex; gap: 10px; margin-bottom: 32px; z-index: 1; flex-wrap: wrap; justify-content: center;
 }
-.success-btn:active { transform: scale(0.96); }
+.ds {
+  padding: 12px 18px; border-radius: 14px;
+  display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 82px;
+}
+.ds.remembered { background: #f0fdf4; border: 1px solid #bbf7d0; }
+.ds.forgot     { background: #fef2f2; border: 1px solid #fecaca; }
+.ds.leveled    { background: #fef9ee; border: 1px solid #fde68a; }
 
-@keyframes pulse { 0% { opacity: 1; box-shadow: 0 0 0 0 rgba(234, 88, 12, 0.4); } 70% { opacity: 0.5; box-shadow: 0 0 0 6px rgba(234, 88, 12, 0); } 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(234, 88, 12, 0); } }
+.ds-num {
+  font-size: 1.7rem; font-weight: 800; line-height: 1;
+}
+.remembered .ds-num { color: #16a34a; }
+.forgot .ds-num     { color: #dc2626; }
+.leveled .ds-num    { color: #d97706; }
+
+.ds-lbl {
+  font-size: 0.65rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.5px; color: #94a3b8;
+}
+
+.done-btn {
+  padding: 15px 44px;
+  background: #0f172a; color: white;
+  border: none; border-radius: 16px;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-weight: 700; font-size: 1rem; cursor: pointer;
+  box-shadow: 0 8px 20px -6px rgba(15,23,42,0.3);
+  z-index: 1; transition: transform 0.2s;
+}
+.done-btn:active { transform: scale(0.97); }
 </style>

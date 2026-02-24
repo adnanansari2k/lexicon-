@@ -4,160 +4,199 @@ import { collection, addDoc, doc, updateDoc, arrayUnion } from 'firebase/firesto
 import { db } from '../firebase'
 
 const props = defineProps({
-  books: { type: Array, default: () => [] },
+  books:   { type: Array,   default: () => [] },
   loading: { type: Boolean, default: false }
 })
 const emit = defineEmits(['refresh'])
 
-// Modals State
-const selectedBook = ref(null)
+const selectedBook     = ref(null)
 const showAddBookModal = ref(false)
 
-// Forms State
-const newBookTitle = ref('')
+const newBookTitle  = ref('')
 const newBookAuthor = ref('')
-const isAddingBook = ref(false)
+const isAddingBook  = ref(false)
 
-const newQuoteText = ref('')
+const newQuoteText  = ref('')
 const isAddingQuote = ref(false)
-
-// --- ACTIONS ---
 
 const addNewBook = async () => {
   if (!newBookTitle.value.trim()) return
   isAddingBook.value = true
   try {
     await addDoc(collection(db, 'books'), {
-      title: newBookTitle.value,
-      author: newBookAuthor.value || 'Unknown Author',
-      quotes: [],
+      title:     newBookTitle.value,
+      author:    newBookAuthor.value || 'Unknown Author',
+      quotes:    [],
       dateAdded: Date.now()
     })
-    newBookTitle.value = ''
+    newBookTitle.value  = ''
     newBookAuthor.value = ''
     showAddBookModal.value = false
     emit('refresh')
-  } catch (e) {
-    console.error("Error adding book:", e)
-  } finally {
-    isAddingBook.value = false
-  }
+  } catch (e) { console.error(e) }
+  finally { isAddingBook.value = false }
 }
 
 const addNewQuote = async () => {
   if (!newQuoteText.value.trim() || !selectedBook.value) return
   isAddingQuote.value = true
   try {
-    const bookRef = doc(db, 'books', selectedBook.value.id)
-    const quoteData = {
-      text: newQuoteText.value,
-      dateAdded: Date.now()
-    }
-    
-    // Update Firebase
-    await updateDoc(bookRef, {
-      quotes: arrayUnion(quoteData)
-    })
-    
-    // Update local state instantly so we don't have to wait for refresh
+    const quoteData = { text: newQuoteText.value, dateAdded: Date.now() }
+    await updateDoc(doc(db, 'books', selectedBook.value.id), { quotes: arrayUnion(quoteData) })
     selectedBook.value.quotes.push(quoteData)
     newQuoteText.value = ''
-    emit('refresh') // Refresh in background
-  } catch (e) {
-    console.error("Error adding quote:", e)
-  } finally {
-    isAddingQuote.value = false
-  }
+    emit('refresh')
+  } catch (e) { console.error(e) }
+  finally { isAddingQuote.value = false }
 }
+
+// spine colors cycle for book cards
+const spineColors = [
+  { accent: '#818cf8', bg: '#eef2ff', border: '#c7d2fe' },
+  { accent: '#34d399', bg: '#f0fdf4', border: '#a7f3d0' },
+  { accent: '#fbbf24', bg: '#fffbeb', border: '#fde68a' },
+  { accent: '#f472b6', bg: '#fdf2f8', border: '#fbcfe8' },
+  { accent: '#60a5fa', bg: '#eff6ff', border: '#bfdbfe' },
+  { accent: '#fb923c', bg: '#fff7ed', border: '#fed7aa' },
+]
+const spine = (i) => spineColors[i % spineColors.length]
 </script>
 
 <template>
-  <div class="books-wrapper">
-    
-    <header class="page-header">
+  <div class="bw">
+
+    <!-- HEADER -->
+    <header class="ph">
       <div class="title-row">
         <div>
-          <h1 class="main-title">📖 Library of Quotes</h1>
-          <p class="subtitle">Your personal collection of profound thoughts.</p>
+          <h1 class="main-title">Library of Quotes</h1>
+          <p class="subtitle">Your personal collection of profound thoughts</p>
         </div>
-        <button class="add-btn" @click="showAddBookModal = true">+ Add Book</button>
+        <button class="add-btn" @click="showAddBookModal = true">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M12 5v14M5 12h14"/></svg>
+          Add Book
+        </button>
       </div>
     </header>
 
+    <!-- LOADING -->
     <div v-if="loading" class="loading-state">
       <div class="spinner"></div>
     </div>
 
-    <div v-else class="books-grid">
+    <!-- BOOKS GRID -->
+    <div v-else class="books-list">
       <div v-if="books.length === 0" class="empty-state">
-        <span class="icon">📚</span>
-        <p>You haven't added any books yet.</p>
+        <div class="empty-icon">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="1.5"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+        </div>
+        <p>No books yet. Add your first one.</p>
       </div>
 
-      <div 
-        v-for="book in books" 
-        :key="book.id" 
-        class="book-card modern-card"
+      <div
+        v-for="(book, i) in books"
+        :key="book.id"
+        class="book-card"
         @click="selectedBook = book"
       >
-        <div class="book-info">
-          <h2 class="book-title">{{ book.title }}</h2>
-          <span class="book-author">by {{ book.author }}</span>
-        </div>
-        <div class="quote-count">
-          <span>{{ book.quotes?.length || 0 }}</span>
-          <small>Quotes</small>
+        <!-- Colored spine accent -->
+        <div class="book-spine" :style="{ background: spine(i).accent }"></div>
+
+        <div class="book-body">
+          <div class="book-info">
+            <h2 class="book-title">{{ book.title }}</h2>
+            <span class="book-author">{{ book.author }}</span>
+          </div>
+
+          <div class="quote-badge" :style="{ background: spine(i).bg, borderColor: spine(i).border, color: spine(i).accent }">
+            <span class="qb-num">{{ book.quotes?.length || 0 }}</span>
+            <span class="qb-lbl">quotes</span>
+          </div>
         </div>
       </div>
     </div>
 
+    <!-- ADD BOOK MODAL -->
     <Transition name="fade-scale">
-      <div v-if="showAddBookModal" class="modal-overlay" @click.self="showAddBookModal = false">
-        <div class="modal-content add-modal">
-          <h2>Add a New Book</h2>
-          <input v-model="newBookTitle" type="text" placeholder="Book Title (e.g. Atomic Habits)" class="modern-input" />
-          <input v-model="newBookAuthor" type="text" placeholder="Author Name" class="modern-input" />
-          
-          <div class="modal-actions">
-            <button class="cancel-btn" @click="showAddBookModal = false">Cancel</button>
-            <button class="save-btn" @click="addNewBook" :disabled="isAddingBook">
-              {{ isAddingBook ? 'Saving...' : 'Save Book' }}
+      <div v-if="showAddBookModal" class="overlay" @click.self="showAddBookModal = false">
+        <div class="modal add-modal">
+          <button class="close-btn" @click="showAddBookModal = false">âœ•</button>
+
+          <div class="modal-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+          </div>
+          <h2 class="modal-title">Add a Book</h2>
+          <p class="modal-sub">Save books whose quotes you want to collect.</p>
+
+          <input
+            v-model="newBookTitle"
+            type="text"
+            placeholder="Book title"
+            class="inp"
+            @keyup.enter="addNewBook"
+          />
+          <input
+            v-model="newBookAuthor"
+            type="text"
+            placeholder="Author name"
+            class="inp"
+            @keyup.enter="addNewBook"
+          />
+
+          <div class="modal-btns">
+            <button class="btn-cancel" @click="showAddBookModal = false">Cancel</button>
+            <button class="btn-save" @click="addNewBook" :disabled="isAddingBook || !newBookTitle.trim()">
+              {{ isAddingBook ? 'Savingâ€¦' : 'Save Book' }}
             </button>
           </div>
         </div>
       </div>
     </Transition>
 
+    <!-- BOOK READER MODAL -->
     <Transition name="slide-up">
-      <div v-if="selectedBook" class="modal-overlay" @click.self="selectedBook = null">
-        <div class="modal-content full-modal">
-          <button class="close-btn" @click="selectedBook = null">✕</button>
-          
-          <div class="modal-header">
-            <h1 class="book-title-large">{{ selectedBook.title }}</h1>
-            <p class="book-author-large">{{ selectedBook.author }}</p>
+      <div v-if="selectedBook" class="overlay" @click.self="selectedBook = null">
+        <div class="modal book-modal">
+          <button class="close-btn" @click="selectedBook = null">âœ•</button>
+
+          <!-- Book header -->
+          <div class="bm-header">
+            <span class="bm-tag">Quote Collection</span>
+            <h1 class="bm-title">{{ selectedBook.title }}</h1>
+            <p class="bm-author">{{ selectedBook.author }}</p>
           </div>
 
+          <!-- Quotes list -->
           <div class="quotes-scroll">
-            <div v-if="!selectedBook.quotes || selectedBook.quotes.length === 0" class="no-quotes">
-              No quotes added yet. Add your first one below!
+            <div v-if="!selectedBook.quotes?.length" class="no-quotes">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#e2e8f0" stroke-width="1.5"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+              <p>No quotes yet. Add the first one below.</p>
             </div>
-            
-            <div v-for="(quote, index) in selectedBook.quotes" :key="index" class="quote-item">
-              <span class="quote-mark">"</span>
-              <p class="quote-text">{{ quote.text || quote }}</p>
+
+            <div
+              v-for="(quote, idx) in selectedBook.quotes"
+              :key="idx"
+              class="quote-card"
+            >
+              <span class="qmark">"</span>
+              <p class="qtext">{{ quote.text || quote }}</p>
             </div>
           </div>
 
-          <div class="add-quote-section">
-            <textarea 
-              v-model="newQuoteText" 
-              placeholder="Paste or type a profound quote from this book..." 
-              class="quote-input"
+          <!-- Add quote -->
+          <div class="add-quote">
+            <textarea
+              v-model="newQuoteText"
+              placeholder="Paste a quote from this bookâ€¦"
+              class="quote-ta"
               rows="3"
             ></textarea>
-            <button class="submit-quote-btn" @click="addNewQuote" :disabled="isAddingQuote || !newQuoteText">
-              {{ isAddingQuote ? 'Adding...' : 'Add Quote' }}
+            <button
+              class="add-quote-btn"
+              @click="addNewQuote"
+              :disabled="isAddingQuote || !newQuoteText.trim()"
+            >
+              {{ isAddingQuote ? 'Addingâ€¦' : 'Add Quote' }}
             </button>
           </div>
 
@@ -169,65 +208,249 @@ const addNewQuote = async () => {
 </template>
 
 <style scoped>
-.books-wrapper { padding: 16px; max-width: 600px; margin: 0 auto; min-height: 100%; padding-bottom: 40px; }
+@import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,600;0,700;1,500&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
 
-/* HEADER */
-.page-header { margin-bottom: 24px; }
-.title-row { display: flex; justify-content: space-between; align-items: center; }
-.main-title { font-size: 1.8rem; color: #0f172a; margin: 0 0 4px 0; font-weight: 800; letter-spacing: -0.5px; }
-.subtitle { font-size: 0.95rem; color: #64748b; margin: 0; }
-.add-btn { background: #0f172a; color: white; border: none; padding: 10px 16px; border-radius: 12px; font-weight: 700; cursor: pointer; transition: transform 0.2s; box-shadow: 0 4px 10px rgba(15,23,42,0.2); }
+* { box-sizing: border-box; }
+
+.bw {
+  padding: 20px 16px 80px;
+  max-width: 600px;
+  margin: 0 auto;
+  min-height: 100%;
+  background: #f8fafc;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+/* â”€â”€ HEADER â”€â”€ */
+.ph { margin-bottom: 24px; }
+.title-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+
+.main-title {
+  font-family: 'Lora', serif;
+  font-size: 1.65rem; font-weight: 700;
+  color: #0f172a; margin: 0 0 3px;
+  letter-spacing: -0.3px; line-height: 1.2;
+}
+.subtitle { font-size: 0.8rem; color: #94a3b8; margin: 0; font-weight: 500; }
+
+.add-btn {
+  display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+  background: #0f172a; color: white; border: none;
+  padding: 9px 14px; border-radius: 12px;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 0.78rem; font-weight: 700; cursor: pointer;
+  box-shadow: 0 4px 12px -4px rgba(15,23,42,0.25);
+  transition: transform 0.12s;
+}
 .add-btn:active { transform: scale(0.95); }
 
-/* GRID */
-.books-grid { display: flex; flex-direction: column; gap: 16px; }
-.book-card { display: flex; justify-content: space-between; align-items: center; padding: 20px; background: white; border-radius: 20px; box-shadow: 0 10px 25px -5px rgba(15,23,42,0.05); border: 1px solid #f1f5f9; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
-.book-card:active { transform: scale(0.98); background: #f8fafc; }
-.book-title { font-size: 1.2rem; margin: 0 0 4px 0; color: #1e293b; font-weight: 800; }
-.book-author { font-size: 0.9rem; color: #64748b; font-style: italic; }
-.quote-count { display: flex; flex-direction: column; align-items: center; background: #f0fdf4; color: #166534; padding: 10px 14px; border-radius: 14px; border: 1px solid #bbf7d0; min-width: 65px; }
-.quote-count span { font-size: 1.2rem; font-weight: 800; line-height: 1; }
-.quote-count small { font-size: 0.65rem; text-transform: uppercase; font-weight: 700; margin-top: 4px; }
-.empty-state { text-align: center; padding: 40px; color: #64748b; background: white; border-radius: 20px; border: 1px dashed #cbd5e1; }
-.empty-state .icon { font-size: 2.5rem; display: block; margin-bottom: 10px; }
+/* â”€â”€ LOADING â”€â”€ */
+.loading-state { display: flex; justify-content: center; padding: 60px 0; }
+.spinner {
+  width: 32px; height: 32px;
+  border: 3px solid #e2e8f0; border-top-color: #0f172a;
+  border-radius: 50%; animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 
-/* MODALS (Shared) */
-.modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(15,23,42,0.6); backdrop-filter: blur(4px); z-index:9999; display: flex; justify-content: center; align-items: center; padding: 20px; }
-.close-btn { position: absolute; top: 16px; right: 16px; background: #f1f5f9; border: none; width: 32px; height: 32px; border-radius: 50%; font-size: 1rem; color: #475569; font-weight: bold; cursor: pointer; z-index: 10; }
+/* â”€â”€ BOOK LIST â”€â”€ */
+.books-list { display: flex; flex-direction: column; gap: 10px; }
 
-/* ADD BOOK MODAL */
-.add-modal { background: white; width: 100%; max-width: 400px; padding: 24px; border-radius: 24px; box-shadow: 0 20px 50px rgba(0,0,0,0.15); }
-.add-modal h2 { margin: 0 0 20px 0; font-size: 1.4rem; color: #0f172a; }
-.modern-input { width: 100%; padding: 14px; border: 2px solid #e2e8f0; border-radius: 12px; margin-bottom: 16px; font-size: 1rem; transition: border-color 0.2s; box-sizing: border-box;}
-.modern-input:focus { outline: none; border-color: #0f172a; }
-.modal-actions { display: flex; gap: 12px; justify-content: flex-end; margin-top: 8px; }
-.cancel-btn { padding: 12px 20px; background: #f1f5f9; color: #64748b; border: none; border-radius: 12px; font-weight: 700; cursor: pointer; }
-.save-btn { padding: 12px 20px; background: #0f172a; color: white; border: none; border-radius: 12px; font-weight: 700; cursor: pointer; }
+.empty-state {
+  text-align: center; padding: 48px 20px;
+  background: white; border-radius: 20px; border: 1px dashed #e2e8f0;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+}
+.empty-icon { color: #e2e8f0; }
+.empty-state p { color: #94a3b8; font-size: 0.88rem; margin: 0; }
 
-/* FULL QUOTES MODAL */
-.full-modal { background: #fafaf9; width: 100%; max-width: 500px; height: 85vh; border-radius: 24px; display: flex; flex-direction: column; overflow: hidden; position: relative; box-shadow: 0 20px 50px rgba(0,0,0,0.2); }
-.modal-header { padding: 24px 24px 16px; background: white; border-bottom: 1px solid #e2e8f0; }
-.book-title-large { font-size: 1.6rem; color: #0f172a; margin: 0 0 4px 0; font-weight: 800; padding-right: 30px; }
-.book-author-large { font-size: 1rem; color: #64748b; font-style: italic; margin: 0; }
+/* â”€â”€ BOOK CARD â”€â”€ */
+.book-card {
+  background: white; border: 1px solid #f1f5f9; border-radius: 18px;
+  overflow: hidden; display: flex;
+  box-shadow: 0 2px 12px -4px rgba(15,23,42,0.06);
+  cursor: pointer; transition: transform 0.12s;
+}
+.book-card:active { transform: scale(0.982); }
 
-.quotes-scroll { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; background: #fafaf9; }
-.no-quotes { text-align: center; color: #94a3b8; font-style: italic; margin-top: 40px; }
-.quote-item { background: white; padding: 20px; border-radius: 16px; position: relative; box-shadow: 0 4px 10px rgba(15,23,42,0.03); border: 1px solid #f1f5f9; }
-.quote-mark { position: absolute; top: -5px; left: 10px; font-size: 4rem; color: #fef08a; font-family: Georgia, serif; opacity: 0.5; line-height: 1; pointer-events: none; }
-.quote-text { margin: 0; font-size: 1.1rem; color: #334155; line-height: 1.6; font-family: 'Georgia', serif; font-style: italic; position: relative; z-index: 1; }
+.book-spine {
+  width: 5px; flex-shrink: 0; border-radius: 18px 0 0 18px;
+}
 
-.add-quote-section { padding: 16px; background: white; border-top: 1px solid #e2e8f0; display: flex; flex-direction: column; gap: 10px; }
-.quote-input { width: 100%; padding: 14px; border: 2px solid #e2e8f0; border-radius: 12px; font-size: 0.95rem; resize: none; font-family: inherit; transition: border-color 0.2s; box-sizing: border-box;}
-.quote-input:focus { outline: none; border-color: #cbd5e1; }
-.submit-quote-btn { background: #16a34a; color: white; padding: 14px; border: none; border-radius: 12px; font-weight: 700; font-size: 1rem; cursor: pointer; transition: background 0.2s; }
-.submit-quote-btn:disabled { background: #94a3b8; cursor: not-allowed; }
-.submit-quote-btn:active:not(:disabled) { transform: scale(0.98); }
+.book-body {
+  flex: 1; display: flex; justify-content: space-between;
+  align-items: center; padding: 18px 16px;
+}
 
-/* TRANSITIONS */
+.book-info { flex: 1; min-width: 0; }
+.book-title {
+  font-family: 'Lora', serif;
+  font-size: 1.05rem; font-weight: 700; color: #0f172a;
+  margin: 0 0 4px; line-height: 1.3;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.book-author {
+  font-size: 0.78rem; color: #94a3b8; font-style: italic; font-weight: 500;
+}
+
+.quote-badge {
+  display: flex; flex-direction: column; align-items: center;
+  border: 1px solid; border-radius: 12px;
+  padding: 9px 13px; flex-shrink: 0; margin-left: 14px;
+  min-width: 58px;
+}
+.qb-num { font-size: 1.15rem; font-weight: 800; line-height: 1; }
+.qb-lbl { font-size: 0.55rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 3px; opacity: 0.8; }
+
+/* â”€â”€ OVERLAY â”€â”€ */
+.overlay {
+  position: fixed; inset: 0;
+  background: rgba(15,23,42,0.45); backdrop-filter: blur(6px);
+  z-index: 9999; display: flex; justify-content: center; align-items: center;
+  padding: 20px;
+}
+
+.close-btn {
+  position: absolute; top: 14px; right: 14px;
+  background: #f1f5f9; border: none; width: 30px; height: 30px;
+  border-radius: 50%; font-size: 0.85rem; color: #475569; font-weight: bold;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  z-index: 2; transition: background 0.12s;
+}
+.close-btn:hover { background: #e2e8f0; }
+
+/* â”€â”€ ADD BOOK MODAL â”€â”€ */
+.add-modal {
+  background: white; width: 100%; max-width: 400px;
+  padding: 28px 24px 24px; border-radius: 24px;
+  position: relative;
+  box-shadow: 0 24px 60px rgba(15,23,42,0.18);
+}
+
+.modal-icon {
+  width: 46px; height: 46px; background: #eef2ff; border-radius: 14px;
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 14px;
+}
+.modal-title {
+  font-family: 'Lora', serif;
+  font-size: 1.35rem; font-weight: 700; color: #0f172a;
+  margin: 0 0 4px;
+}
+.modal-sub { font-size: 0.8rem; color: #94a3b8; margin: 0 0 20px; }
+
+.inp {
+  width: 100%; padding: 13px 14px;
+  border: 1.5px solid #e2e8f0; border-radius: 12px;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 0.92rem; color: #0f172a;
+  margin-bottom: 10px; transition: border-color 0.15s;
+  background: #fafafa;
+}
+.inp:focus { outline: none; border-color: #6366f1; background: white; }
+.inp::placeholder { color: #94a3b8; }
+
+.modal-btns { display: flex; gap: 10px; justify-content: flex-end; margin-top: 6px; }
+.btn-cancel {
+  padding: 10px 18px; background: #f8fafc; border: 1px solid #e2e8f0;
+  color: #64748b; border-radius: 11px; font-family: inherit;
+  font-size: 0.85rem; font-weight: 700; cursor: pointer;
+}
+.btn-save {
+  padding: 10px 20px; background: #0f172a; color: white; border: none;
+  border-radius: 11px; font-family: inherit;
+  font-size: 0.85rem; font-weight: 700; cursor: pointer;
+  transition: opacity 0.15s;
+}
+.btn-save:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* â”€â”€ BOOK READER MODAL â”€â”€ */
+.book-modal {
+  background: #fafaf9; width: 100%; max-width: 500px; height: 85vh;
+  border-radius: 24px; display: flex; flex-direction: column;
+  overflow: hidden; position: relative;
+  box-shadow: 0 24px 60px rgba(15,23,42,0.2);
+}
+
+.bm-header {
+  padding: 22px 22px 16px; background: white;
+  border-bottom: 1px solid #f1f5f9; flex-shrink: 0;
+  padding-right: 48px;
+}
+.bm-tag {
+  display: inline-block; font-size: 0.55rem; font-weight: 800;
+  text-transform: uppercase; letter-spacing: 1.2px;
+  background: #eef2ff; color: #6366f1; border: 1px solid #c7d2fe;
+  padding: 2px 8px; border-radius: 6px; margin-bottom: 8px;
+}
+.bm-title {
+  font-family: 'Lora', serif;
+  font-size: 1.5rem; font-weight: 700; color: #0f172a;
+  margin: 0 0 4px; line-height: 1.25;
+}
+.bm-author { font-size: 0.85rem; color: #94a3b8; font-style: italic; margin: 0; }
+
+/* Quotes scroll */
+.quotes-scroll {
+  flex: 1; overflow-y: auto; padding: 18px 18px 10px;
+  display: flex; flex-direction: column; gap: 13px;
+}
+
+.no-quotes {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 40px 20px; color: #94a3b8;
+  font-size: 0.85rem; text-align: center;
+}
+.no-quotes p { margin: 0; }
+
+.quote-card {
+  background: white; border: 1px solid #f1f5f9; border-radius: 16px;
+  padding: 18px 18px 16px; position: relative;
+  box-shadow: 0 1px 6px -2px rgba(15,23,42,0.04);
+}
+.qmark {
+  position: absolute; top: -4px; left: 12px;
+  font-family: 'Lora', serif; font-size: 3.5rem;
+  color: #fde68a; line-height: 1; pointer-events: none; opacity: 0.7;
+}
+.qtext {
+  font-family: 'Lora', serif; font-style: italic;
+  font-size: 0.98rem; color: #334155; line-height: 1.7;
+  margin: 0; position: relative; z-index: 1;
+  padding-top: 6px;
+}
+
+/* Add quote area */
+.add-quote {
+  padding: 14px 16px; background: white;
+  border-top: 1px solid #f1f5f9; flex-shrink: 0;
+  display: flex; flex-direction: column; gap: 9px;
+}
+.quote-ta {
+  width: 100%; padding: 12px 14px;
+  border: 1.5px solid #e2e8f0; border-radius: 12px;
+  font-family: 'Lora', serif; font-style: italic;
+  font-size: 0.92rem; color: #334155; resize: none;
+  transition: border-color 0.15s; background: #fafafa;
+}
+.quote-ta:focus { outline: none; border-color: #6366f1; background: white; }
+.quote-ta::placeholder { color: #94a3b8; font-style: italic; }
+
+.add-quote-btn {
+  width: 100%; padding: 12px;
+  background: #0f172a; color: white; border: none;
+  border-radius: 12px; font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 0.88rem; font-weight: 800; cursor: pointer;
+  box-shadow: 0 4px 12px -4px rgba(15,23,42,0.2);
+  transition: transform 0.12s, opacity 0.15s;
+}
+.add-quote-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+.add-quote-btn:active:not(:disabled) { transform: scale(0.98); }
+
+/* â”€â”€ TRANSITIONS â”€â”€ */
 .fade-scale-enter-active, .fade-scale-leave-active { transition: opacity 0.2s, transform 0.2s; }
-.fade-scale-enter-from, .fade-scale-leave-to { opacity: 0; transform: scale(0.95); }
-.slide-up-enter-active, .slide-up-leave-active { transition: opacity 0.3s, transform 0.3s; }
-.slide-up-enter-from, .slide-up-leave-to { opacity: 0; transform: translateY(50px); }
-.spinner { width: 30px; height: 30px; border: 3px solid #e2e8f0; border-top: 3px solid #0f172a; border-radius: 50%; animation: spin 1s linear infinite; margin: 40px auto; }
-@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+.fade-scale-enter-from, .fade-scale-leave-to { opacity: 0; transform: scale(0.96); }
+
+.slide-up-enter-active, .slide-up-leave-active { transition: opacity 0.25s, transform 0.3s cubic-bezier(0.16,1,0.3,1); }
+.slide-up-enter-from, .slide-up-leave-to { opacity: 0; transform: translateY(40px); }
 </style>

@@ -5,28 +5,35 @@ import { db } from '../firebase'
 
 const emit = defineEmits(['refresh'])
 
-// STATE
-const uploadType = ref('words') // 'words' or 'discovery'
+// ================= STATE =================
+const uploadType = ref('words')
 const jsonInput = ref('')
 const isUploading = ref(false)
 const statusMessage = ref('')
-const statusType = ref('') // 'success', 'error', or 'info'
+const statusType = ref('')
 
-// DYNAMIC PLACEHOLDER BASED ON UPLOAD TYPE
+// ================= PLACEHOLDER =================
 const placeholderText = computed(() => {
   if (uploadType.value === 'words') {
     return `[
   {
     "word": "Nostalgia",
-    "meanings": { "urdu": "...", "hindi": "..." },
-    "scenario": "...",
-    "focusPoint": "..."
+    "part_of_speech": "noun",
+    "meaning": "A sentimental longing for the past.",
+    "simple_meaning": "Missing the past.",
+    "scenarios": ["Example scenario 1", "Example scenario 2"],
+    "example_sentence": "He felt nostalgia for his childhood.",
+    "synonyms": ["longing"],
+    "antonyms": ["indifference"],
+    "mastery_level": 0,
+    "streak": 0,
+    "status": "new"
   }
 ]`
   } else {
     return `[
   {
-    "type": "fact", // can be: news, story, fact, lesson
+    "type": "fact",
     "title": "Honey Never Expires",
     "content": "Archaeologists found 3,000-year-old honey..."
   }
@@ -34,6 +41,7 @@ const placeholderText = computed(() => {
   }
 })
 
+// ================= MAIN UPLOAD FUNCTION =================
 const processUpload = async () => {
   if (!jsonInput.value.trim()) {
     showStatus("Please paste some JSON data first.", "error")
@@ -45,81 +53,128 @@ const processUpload = async () => {
     showStatus(`Analyzing your ${uploadType.value}...`, "info")
 
     const parsedData = JSON.parse(jsonInput.value)
+
     if (!Array.isArray(parsedData)) {
-      throw new Error("The JSON format must be an array [ { ... } ].")
+      throw new Error("JSON must be an array.")
     }
 
     let addedCount = 0
     let skippedCount = 0
 
-    // ==========================================
-    // 1. VOCABULARY WORDS UPLOAD LOGIC
-    // ==========================================
+    // ====================================================
+    // WORDS UPLOAD
+    // ====================================================
     if (uploadType.value === 'words') {
+
       const snapshot = await getDocs(collection(db, 'words'))
-      const existingWords = new Set(snapshot.docs.map(doc => doc.data().word?.toLowerCase().trim()))
+      const existingWords = new Set(
+        snapshot.docs.map(doc =>
+          doc.data().word?.toLowerCase().trim()
+        )
+      )
 
       for (const item of parsedData) {
-        if (!item.word) continue 
+        if (!item.word) continue
 
         const wordKey = item.word.toLowerCase().trim()
+
         if (existingWords.has(wordKey)) {
           skippedCount++
           continue
         }
 
         await addDoc(collection(db, 'words'), {
+          // ================= WORD CONTENT =================
           word: item.word,
-          meanings: item.meanings || { urdu: "", hindi: "" },
-          scenario: item.scenario || "",
-          focusPoint: item.focusPoint || "",
-          examples: item.examples || [],
-          synonyms: item.synonyms || [],
-          streak: 0,
+          part_of_speech: item.part_of_speech || "",
+          meaning: item.meaning || "",
+          simple_meaning: item.simple_meaning || "",
+          hindi_meaning:item.hindi_meaning,
+urdu_meaning:item.urdu_meaning ,
+          scenarios: Array.isArray(item.scenarios) ? item.scenarios : [],
+          example_sentence: item.example_sentence || item.examples ||item.example_sentences || "" ,
+          synonyms: Array.isArray(item.synonyms) ? item.synonyms : [],
+          antonyms: Array.isArray(item.antonyms) ? item.antonyms : [],
+
+          // ================= PROGRESS =================
+          masteryLevel: item.mastery_level ?? 0,
+          streak: item.streak ?? 0,
           interval: 1,
-          nextReview: null,
+          status: item.status || "new",
+          lastReviewed: item.last_reviewed ?? null,
+          nextReview: item.next_review_date ?? null,
+          totalReviews: 0,
+          totalFailures: 0,
+
+          // ================= META =================
           dateAdded: Date.now()
         })
+
         existingWords.add(wordKey)
-        addedCount++
-      }
-    } 
-    // ==========================================
-    // 2. DISCOVERY CONTENT UPLOAD LOGIC
-    // ==========================================
-    else {
-      const snapshot = await getDocs(collection(db, 'discovery'))
-      const existingTitles = new Set(snapshot.docs.map(doc => doc.data().title?.toLowerCase().trim()))
-
-      for (const item of parsedData) {
-        if (!item.title || !item.type) continue 
-
-        const titleKey = item.title.toLowerCase().trim()
-        if (existingTitles.has(titleKey)) {
-          skippedCount++
-          continue
-        }
-
-        await addDoc(collection(db, 'discovery'), {
-          type: item.type, // 'news', 'story', 'fact', or 'lesson'
-          title: item.title,
-          content: item.content || "",
-          intro: item.intro || "",
-          points: item.points || [],
-          dateAdded: Date.now()
-        })
-        existingTitles.add(titleKey)
         addedCount++
       }
     }
 
-    // FINAL RESULTS
+    // ====================================================
+    // DISCOVERY UPLOAD
+    // ====================================================
+    // ====================================================
+// DISCOVERY UPLOAD (Updated for ItemReader JSON)
+// ====================================================
+else {
+  const snapshot = await getDocs(collection(db, 'discovery'))
+  const existingTitles = new Set(
+    snapshot.docs.map(doc =>
+      doc.data().title?.toLowerCase().trim()
+    )
+  )
+
+  for (const item of parsedData) {
+    if (!item.title || !item.type) continue
+
+    const titleKey = item.title.toLowerCase().trim()
+
+    if (existingTitles.has(titleKey)) {
+      skippedCount++
+      continue
+    }
+
+    await addDoc(collection(db, 'discovery'), {
+      // ================= META =================
+      id: item.id || null,
+      type: item.type,
+      title: item.title,
+      level: item.level || null,
+      words: Array.isArray(item.words) ? item.words : [],
+
+      // ================= CONTENT =================
+      sections: Array.isArray(item.sections) ? item.sections : [],
+      footer: item.footer || "",
+      dateAdded: item.dateAdded ? new Date(item.dateAdded).getTime() : Date.now(),
+
+      // ================= EXTRA =================
+      tags: Array.isArray(item.tags) ? item.tags : [],
+      availableFrom: item.availableFrom || null,
+      availableTo: item.availableTo || null
+    })
+
+    existingTitles.add(titleKey)
+    addedCount++
+  }
+}
+    // ================= FINAL RESULT =================
     if (addedCount > 0) {
-      showStatus(`Success! Added ${addedCount} new items. (Skipped ${skippedCount} duplicates).`, "success")
-      jsonInput.value = '' 
-      emit('refresh') 
+      showStatus(
+        `Success! Added ${addedCount} new items. (Skipped ${skippedCount} duplicates).`,
+        "success"
+      )
+      jsonInput.value = ''
+      emit('refresh')
     } else {
-      showStatus(`No new items added. Skipped ${skippedCount} duplicates.`, "info")
+      showStatus(
+        `No new items added. Skipped ${skippedCount} duplicates.`,
+        "info"
+      )
     }
 
   } catch (err) {
