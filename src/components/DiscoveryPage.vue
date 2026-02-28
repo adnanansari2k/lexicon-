@@ -29,7 +29,7 @@ const getRandomItem = (arr) => {
 // ---------------- DAILY FEED LOGIC ----------------
 const loadFeed = () => {
   const t = today()
-
+console.log(wordsToday)
   // ---------- PROGRESS ----------
   if (localStorage.getItem('goalDate') === t) {
     wordsToday.value = parseInt(localStorage.getItem('dailyCount') || 0)
@@ -42,7 +42,8 @@ const loadFeed = () => {
   const done = localStorage.getItem('completedItems_' + t)
   if (done) completedItems.value = new Set(JSON.parse(done))
 
-  // ---------- FILTER BY DATE ----------
+  // ---------- SHOW ALL VALID ITEMS ----------
+  console.log(props.discoveryItems)
   const validItems = (props.discoveryItems || []).filter(item => {
     if (!item.availableFrom || !item.availableTo) return true
     const now = new Date()
@@ -50,28 +51,10 @@ const loadFeed = () => {
            new Date(item.availableTo) >= now
   })
 
-  const stories  = validItems.filter(i => i.type === 'story')
-  const grammars = validItems.filter(i => i.type === 'grammar')
+  console.log(todaysFeed.value,validItems)
+todaysFeed.value = props.discoveryItems
 
-  // ---------- DAILY CACHE ----------
-  const cachedDate = localStorage.getItem('discoveryFeedDate')
-  const cachedIds  = JSON.parse(localStorage.getItem('discoveryFeed') || '[]')
-
-  if (cachedDate === t && cachedIds.length) {
-    todaysFeed.value = validItems.filter(i => cachedIds.includes(i.id))
-  } else {
-    const randomStory  = getRandomItem(stories)
-    const randomGrammar = getRandomItem(grammars)
-
-    const feed = []
-    if (randomStory) feed.push(randomStory)
-    if (randomGrammar) feed.push(randomGrammar)
-
-    todaysFeed.value = feed
-
-    localStorage.setItem('discoveryFeedDate', t)
-    localStorage.setItem('discoveryFeed', JSON.stringify(feed.map(i => i.id)))
-  }
+// Optional: still cache today's IDs
 }
 
 onMounted(loadFeed)
