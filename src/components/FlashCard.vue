@@ -268,7 +268,7 @@ const ants  = (w) => w.antonyms || []
   flex-direction: column;
   gap: 6px;
   -webkit-overflow-scrolling: touch;
-  height: 260px;        /* 👈 SET HEIGHT */
+  height: 160px;        /* 👈 SET HEIGHT */
   overflow-y: auto;     /* 👈 SCROLL HERE */
 }
 .scene-block { background: linear-gradient(145deg,#fff7ed,#ffedd5); border: 1px solid #fed7aa; }
@@ -292,7 +292,7 @@ const ants  = (w) => w.antonyms || []
 
 /* Pills row */
 .b-foot {
-  display: flex; gap: 6px; padding: 0 10px 6px; flex-shrink: 0;
+  display: flex;gap: 6px; padding: 0 10px 6px; flex-shrink: 0;
 }
 .pgroup { flex: 1; display: flex; flex-direction: column; gap: 4px; }
 .glabel {
