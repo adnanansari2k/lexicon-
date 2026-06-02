@@ -310,7 +310,7 @@ const ants  = (w) => w.antonyms || []
 
 /* Action buttons */
 .actions {
-  margin-top:100px;
+  margin-bottom:10px;
   display: grid; grid-template-columns: 1fr 1fr;
   gap: 7px; padding: 8px 10px 10px;
   background: #fff; border-top: 1px solid #f1f5f9; flex-shrink: 0;
